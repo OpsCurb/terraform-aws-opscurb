@@ -152,6 +152,14 @@ resource "aws_iam_policy" "opscurb" {
           "tag:GetTagValues"
         ]
         Resource = "*"
+      },
+      {
+        Sid    = "CloudTrailReadOnly"
+        Effect = "Allow"
+        Action = [
+          "cloudtrail:LookupEvents"
+        ]
+        Resource = "*"
       }
     ]
   })
