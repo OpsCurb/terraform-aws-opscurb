@@ -51,12 +51,18 @@ resource "aws_iam_policy" "opscurb" {
           "ec2:DescribeAddresses",
           "ec2:DescribeInstances",
           "ec2:DescribeImages",
+          "ec2:DescribeLaunchTemplates",
+          "ec2:DescribeLaunchTemplateVersions",
           "ec2:DescribeNatGateways",
+          "ec2:DescribeFlowLogs",
           "ec2:DescribeVpcEndpoints",
+          "ec2:DescribeManagedPrefixLists",
+          "ec2:GetManagedPrefixListEntries",
           "ec2:DescribeVpcs",
           "ec2:DescribeRegions",
           "ec2:DescribeAvailabilityZones",
-          "ec2:DescribeFastSnapshotRestores"
+          "ec2:DescribeFastSnapshotRestores",
+          "ec2:DescribeSubnets"
         ]
         Resource = "*"
       },
@@ -109,6 +115,15 @@ resource "aws_iam_policy" "opscurb" {
         Resource = "*"
       },
       {
+        Sid    = "AutoScalingReadOnly"
+        Effect = "Allow"
+        Action = [
+          "autoscaling:DescribeAutoScalingGroups",
+          "autoscaling:DescribeLaunchConfigurations"
+        ]
+        Resource = "*"
+      },
+      {
         Sid    = "ECRReadOnly"
         Effect = "Allow"
         Action = [
@@ -126,6 +141,28 @@ resource "aws_iam_policy" "opscurb" {
           "lambda:ListFunctions",
           "lambda:GetFunction",
           "lambda:GetFunctionConfiguration"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "ECSReadOnly"
+        Effect = "Allow"
+        Action = [
+          "ecs:ListClusters",
+          "ecs:ListServices",
+          "ecs:DescribeServices",
+          "ecs:DescribeTaskDefinition"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "IAMReadOnly"
+        Effect = "Allow"
+        Action = [
+          "iam:ListUsers",
+          "iam:ListAccessKeys",
+          "iam:GetAccessKeyLastUsed",
+          "iam:ListRoles"
         ]
         Resource = "*"
       },

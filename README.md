@@ -65,17 +65,21 @@ The module creates a single read-only policy covering:
 
 | Service | Actions |
 |---------|---------|
-| EC2 | Describe volumes, snapshots, instances, NAT gateways, VPC endpoints, etc. |
+| EC2 | Describe volumes, snapshots, instances, launch templates, flow logs, managed prefix lists, NAT gateways, VPC endpoints, etc. |
 | ELB | Describe load balancers, target groups, target health |
 | RDS | Describe DB instances and snapshots |
 | S3 | List buckets, read metadata (no object content access) |
-| CloudWatch / Logs | Get metrics, describe log groups |
+| CloudWatch / Logs | Get metrics, describe log groups, and run scoped Logs Insights queries for Lambda and NAT evidence |
 | ECR | Describe repositories and images |
 | Lambda | List and describe functions |
+| ECS | List clusters/services and read task definitions for Fargate waste detection |
+| IAM | List users, access keys, and roles to detect stale credentials |
 | Cost Explorer | Get cost, forecast, savings plans, and reservation data |
 | Resource Groups Tagging | Read-only tag scanning |
 
 **OpsCurb cannot read S3 object contents, write data, or delete anything.**
+
+Some of these read permissions exist to improve scan precision rather than widen access. For example, launch-template and Auto Scaling reads help OpsCurb avoid false positives on stale AMIs, `logs:StartQuery` / `logs:GetQueryResults` let OpsCurb inspect Lambda `REPORT` lines and existing VPC Flow Logs for higher-confidence waste findings, and ECS reads let OpsCurb size Fargate services from task definitions plus ECS service telemetry.
 
 ### Optional: Tag Write
 
