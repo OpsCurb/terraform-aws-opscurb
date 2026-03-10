@@ -54,6 +54,7 @@ resource "aws_iam_policy" "opscurb" {
           "ec2:DescribeLaunchTemplates",
           "ec2:DescribeLaunchTemplateVersions",
           "ec2:DescribeNatGateways",
+          "ec2:DescribeRouteTables",
           "ec2:DescribeFlowLogs",
           "ec2:DescribeVpcEndpoints",
           "ec2:DescribeManagedPrefixLists",
@@ -97,6 +98,7 @@ resource "aws_iam_policy" "opscurb" {
           "s3:GetLifecycleConfiguration",
           "s3:GetBucketTagging",
           "s3:ListBucketVersions",
+          "s3:ListMultipartUploadParts",
           "s3:ListBucketMultipartUploads"
         ]
         Resource = "*"
@@ -251,4 +253,3 @@ resource "aws_iam_role_policy_attachment" "opscurb_tag_write" {
   role       = aws_iam_role.opscurb.name
   policy_arn = aws_iam_policy.opscurb_tag_write[0].arn
 }
-
