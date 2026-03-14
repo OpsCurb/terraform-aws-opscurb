@@ -1,255 +1,200 @@
-# OpsCurb – Cross-Account IAM Role Module
-# Creates a read-only IAM role that OpsCurb can assume to scan your AWS
-# account for cost optimization opportunities.
+locals {
+  policy_file_by_capability = {
+    core_scan        = "permissions-policy.core-scan.json"
+    deep_inspect     = "permissions-policy.deep-inspect.json"
+    logs_diagnostics = "permissions-policy.logs-diagnostics.json"
+    s3_inventory     = "permissions-policy.s3-inventory.json"
+    iam_inventory    = "permissions-policy.iam-inventory.json"
+    tag_inventory    = "permissions-policy.tag-inventory.json"
+    legacy_broad     = "permissions-policy.legacy.json"
+  }
 
-# ── IAM Role ─────────────────────────────────────────────────────────────────
+  normalized_optional_capabilities = sort(tolist(var.optional_capabilities))
+  separate_optional_capabilities   = var.optional_role_mode == "separate" ? toset(local.normalized_optional_capabilities) : toset([])
+  shared_optional_enabled          = var.optional_role_mode == "shared" && length(local.normalized_optional_capabilities) > 0
 
-resource "aws_iam_role" "opscurb" {
-  name        = var.role_name
-  description = "Read-only role for OpsCurb to scan AWS resources for cost optimization"
+  policy_json_by_capability = {
+    for capability, relative_path in local.policy_file_by_capability :
+    capability => file("${path.module}/${relative_path}")
+  }
 
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Principal = {
-          AWS = "arn:aws:iam::${var.opscurb_aws_account_id}:root"
-        }
-        Action = "sts:AssumeRole"
-        Condition = {
-          StringEquals = {
-            "sts:ExternalId" = var.external_id
-          }
-        }
-      }
-    ]
-  })
+  shared_optional_external_id = (
+    var.optional_external_id != null && trimspace(var.optional_external_id) != ""
+    ? trimspace(var.optional_external_id)
+    : trimspace(var.external_id)
+  )
 
-  tags = merge(var.tags, {
-    Name      = var.role_name
-    ManagedBy = "Terraform"
-    Purpose   = "OpsCurb"
-  })
+  legacy_external_id_value = (
+    var.legacy_external_id != null && trimspace(var.legacy_external_id) != ""
+    ? trimspace(var.legacy_external_id)
+    : trimspace(var.external_id)
+  )
+
+  optional_external_id_by_capability = {
+    for capability in local.normalized_optional_capabilities :
+    capability => (
+      trimspace(lookup(var.optional_external_ids, capability, "")) != ""
+      ? trimspace(lookup(var.optional_external_ids, capability, ""))
+      : (
+        var.optional_external_id != null && trimspace(var.optional_external_id) != ""
+        ? trimspace(var.optional_external_id)
+        : trimspace(var.external_id)
+      )
+    )
+  }
+
+  core_role_name            = "${var.role_name_prefix}-core-scan"
+  shared_optional_role_name = "${var.role_name_prefix}-optional"
+  legacy_role_name          = "${var.role_name_prefix}-legacy"
 }
 
-# ── Read-Only Permissions Policy ─────────────────────────────────────────────
+data "aws_iam_policy_document" "core_assume_role" {
+  statement {
+    sid     = "AllowOpsCurbAssumeRole"
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
 
-resource "aws_iam_policy" "opscurb" {
-  name        = "${var.role_name}-policy"
-  description = "Read-only permissions for OpsCurb scanners"
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:aws:iam::${trimspace(var.opscurb_aws_account_id)}:root"]
+    }
 
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "EC2ReadOnly"
-        Effect = "Allow"
-        Action = [
-          "ec2:DescribeVolumes",
-          "ec2:DescribeSnapshots",
-          "ec2:DescribeAddresses",
-          "ec2:DescribeInstances",
-          "ec2:DescribeImages",
-          "ec2:DescribeLaunchTemplates",
-          "ec2:DescribeLaunchTemplateVersions",
-          "ec2:DescribeNatGateways",
-          "ec2:DescribeRouteTables",
-          "ec2:DescribeFlowLogs",
-          "ec2:DescribeVpcEndpoints",
-          "ec2:DescribeManagedPrefixLists",
-          "ec2:GetManagedPrefixListEntries",
-          "ec2:DescribeVpcs",
-          "ec2:DescribeRegions",
-          "ec2:DescribeAvailabilityZones",
-          "ec2:DescribeFastSnapshotRestores",
-          "ec2:DescribeSubnets"
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "ELBReadOnly"
-        Effect = "Allow"
-        Action = [
-          "elasticloadbalancing:DescribeLoadBalancers",
-          "elasticloadbalancing:DescribeTargetGroups",
-          "elasticloadbalancing:DescribeTargetHealth",
-          "elasticloadbalancing:DescribeTags"
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "RDSReadOnly"
-        Effect = "Allow"
-        Action = [
-          "rds:DescribeDBInstances",
-          "rds:DescribeDBSnapshots",
-          "rds:ListTagsForResource"
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "S3ReadOnly"
-        Effect = "Allow"
-        Action = [
-          "s3:ListAllMyBuckets",
-          "s3:GetBucketLocation",
-          "s3:GetBucketVersioning",
-          "s3:GetLifecycleConfiguration",
-          "s3:GetBucketTagging",
-          "s3:ListBucketVersions",
-          "s3:ListMultipartUploadParts",
-          "s3:ListBucketMultipartUploads"
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "CloudWatchReadOnly"
-        Effect = "Allow"
-        Action = [
-          "cloudwatch:GetMetricStatistics",
-          "cloudwatch:ListMetrics",
-          "logs:DescribeLogGroups",
-          "logs:DescribeLogStreams",
-          "logs:StartQuery",
-          "logs:GetQueryResults"
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "AutoScalingReadOnly"
-        Effect = "Allow"
-        Action = [
-          "autoscaling:DescribeAutoScalingGroups",
-          "autoscaling:DescribeLaunchConfigurations"
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "ECRReadOnly"
-        Effect = "Allow"
-        Action = [
-          "ecr:DescribeRepositories",
-          "ecr:DescribeImages",
-          "ecr:GetLifecyclePolicy",
-          "ecr:ListImages"
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "LambdaReadOnly"
-        Effect = "Allow"
-        Action = [
-          "lambda:ListFunctions",
-          "lambda:GetFunction",
-          "lambda:GetFunctionConfiguration"
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "ECSReadOnly"
-        Effect = "Allow"
-        Action = [
-          "ecs:ListClusters",
-          "ecs:ListServices",
-          "ecs:DescribeServices",
-          "ecs:DescribeTaskDefinition"
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "IAMReadOnly"
-        Effect = "Allow"
-        Action = [
-          "iam:ListUsers",
-          "iam:ListAccessKeys",
-          "iam:GetAccessKeyLastUsed",
-          "iam:ListRoles"
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "CostExplorerReadOnly"
-        Effect = "Allow"
-        Action = [
-          "ce:GetCostAndUsage",
-          "ce:GetCostForecast",
-          "ce:GetSavingsPlansUtilization",
-          "ce:GetSavingsPlansCoverage",
-          "ce:GetReservationUtilization",
-          "ce:GetReservationCoverage",
-          "ce:GetReservationPurchaseRecommendation"
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "TaggingReadOnly"
-        Effect = "Allow"
-        Action = [
-          "tag:GetResources",
-          "tag:GetTagKeys",
-          "tag:GetTagValues"
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "CloudTrailReadOnly"
-        Effect = "Allow"
-        Action = [
-          "cloudtrail:LookupEvents"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
-
-  tags = merge(var.tags, {
-    Name      = "${var.role_name}-policy"
-    ManagedBy = "Terraform"
-  })
+    condition {
+      test     = "StringEquals"
+      variable = "sts:ExternalId"
+      values   = [trimspace(var.external_id)]
+    }
+  }
 }
 
-resource "aws_iam_role_policy_attachment" "opscurb" {
-  role       = aws_iam_role.opscurb.name
-  policy_arn = aws_iam_policy.opscurb.arn
+data "aws_iam_policy_document" "shared_optional_assume_role" {
+  count = local.shared_optional_enabled ? 1 : 0
+
+  statement {
+    sid     = "AllowOpsCurbAssumeRole"
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:aws:iam::${trimspace(var.opscurb_aws_account_id)}:root"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "sts:ExternalId"
+      values   = [local.shared_optional_external_id]
+    }
+  }
 }
 
-# ── Opt-in: Tag Write Permissions ────────────────────────────────────────────
-# Only created when enable_tag_write = true.
-# Allows OpsCurb's Tagging Compliance dashboard to bulk-apply tags on your
-# behalf. Review the feature before enabling.
+data "aws_iam_policy_document" "separate_optional_assume_role" {
+  for_each = local.separate_optional_capabilities
 
-resource "aws_iam_policy" "opscurb_tag_write" {
-  count = var.enable_tag_write ? 1 : 0
+  statement {
+    sid     = "AllowOpsCurbAssumeRole"
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
 
-  name        = "${var.role_name}-tag-write-policy"
-  description = "Opt-in: allows OpsCurb to apply tags via the Tagging Compliance Bulk Apply feature"
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:aws:iam::${trimspace(var.opscurb_aws_account_id)}:root"]
+    }
 
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "TaggingWrite"
-        Effect = "Allow"
-        Action = [
-          "tag:TagResources",
-          "tag:UntagResources"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
-
-  tags = merge(var.tags, {
-    Name      = "${var.role_name}-tag-write-policy"
-    ManagedBy = "Terraform"
-    OptIn     = "true"
-  })
+    condition {
+      test     = "StringEquals"
+      variable = "sts:ExternalId"
+      values   = [local.optional_external_id_by_capability[each.key]]
+    }
+  }
 }
 
-resource "aws_iam_role_policy_attachment" "opscurb_tag_write" {
-  count = var.enable_tag_write ? 1 : 0
+data "aws_iam_policy_document" "legacy_assume_role" {
+  count = var.create_legacy_role ? 1 : 0
 
-  role       = aws_iam_role.opscurb.name
-  policy_arn = aws_iam_policy.opscurb_tag_write[0].arn
+  statement {
+    sid     = "AllowOpsCurbAssumeRole"
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:aws:iam::${trimspace(var.opscurb_aws_account_id)}:root"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "sts:ExternalId"
+      values   = [local.legacy_external_id_value]
+    }
+  }
+}
+
+data "aws_iam_policy_document" "shared_optional_permissions" {
+  count = local.shared_optional_enabled ? 1 : 0
+
+  source_policy_documents = [
+    for capability in local.normalized_optional_capabilities :
+    local.policy_json_by_capability[capability]
+  ]
+}
+
+resource "aws_iam_role" "core_scan" {
+  name               = local.core_role_name
+  path               = var.path
+  assume_role_policy = data.aws_iam_policy_document.core_assume_role.json
+  tags               = var.tags
+}
+
+resource "aws_iam_role_policy" "core_scan" {
+  name   = "${local.core_role_name}-policy"
+  role   = aws_iam_role.core_scan.id
+  policy = local.policy_json_by_capability.core_scan
+}
+
+resource "aws_iam_role" "shared_optional" {
+  count              = local.shared_optional_enabled ? 1 : 0
+  name               = local.shared_optional_role_name
+  path               = var.path
+  assume_role_policy = data.aws_iam_policy_document.shared_optional_assume_role[0].json
+  tags               = var.tags
+}
+
+resource "aws_iam_role_policy" "shared_optional" {
+  count  = local.shared_optional_enabled ? 1 : 0
+  name   = "${local.shared_optional_role_name}-policy"
+  role   = aws_iam_role.shared_optional[0].id
+  policy = data.aws_iam_policy_document.shared_optional_permissions[0].json
+}
+
+resource "aws_iam_role" "separate_optional" {
+  for_each = local.separate_optional_capabilities
+
+  name               = "${var.role_name_prefix}-${replace(each.key, "_", "-")}"
+  path               = var.path
+  assume_role_policy = data.aws_iam_policy_document.separate_optional_assume_role[each.key].json
+  tags               = var.tags
+}
+
+resource "aws_iam_role_policy" "separate_optional" {
+  for_each = local.separate_optional_capabilities
+
+  name   = "${var.role_name_prefix}-${replace(each.key, "_", "-")}-policy"
+  role   = aws_iam_role.separate_optional[each.key].id
+  policy = local.policy_json_by_capability[each.key]
+}
+
+resource "aws_iam_role" "legacy_broad" {
+  count              = var.create_legacy_role ? 1 : 0
+  name               = local.legacy_role_name
+  path               = var.path
+  assume_role_policy = data.aws_iam_policy_document.legacy_assume_role[0].json
+  tags               = var.tags
+}
+
+resource "aws_iam_role_policy" "legacy_broad" {
+  count  = var.create_legacy_role ? 1 : 0
+  name   = "${local.legacy_role_name}-policy"
+  role   = aws_iam_role.legacy_broad[0].id
+  policy = local.policy_json_by_capability.legacy_broad
 }

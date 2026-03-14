@@ -1,25 +1,22 @@
-# terraform-aws-opscurb
+# OpsCurb Terraform Module
 
-Terraform module that creates the cross-account IAM role required to connect
-an AWS account to [OpsCurb](https://opscurb.com).
+This module creates the IAM roles used by OpsCurb's tiered AWS access model:
 
-OpsCurb assumes this role to perform **read-only** scans for idle resources,
-aged snapshots, cost anomalies, and tagging compliance — it cannot modify,
-delete, or create any resources in your account.
+- one required `core_scan` role
+- optional add-on roles for `deep_inspect`, `logs_diagnostics`, `s3_inventory`, `iam_inventory`, and `tag_inventory`
+- an optional legacy broad-access role for migration support only
 
----
+The module vendors the generated IAM policy JSON artifacts in this repository so the Terraform roles stay aligned with the shared access manifest and permissions matrix.
 
-## Usage
+## Core-only example
 
 ```hcl
 module "opscurb" {
   source  = "OpsCurb/opscurb/aws"
   version = "~> 1.0"
 
-  # Both values are shown in your OpsCurb dashboard under
-  # Settings → AWS Accounts → Connect Account
-  opscurb_aws_account_id = "123456789012"
-  external_id            = "your-external-id-from-dashboard"
+  opscurb_aws_account_id = "593543056092"
+  external_id            = "ccg-core-12345678"
 }
 
 output "role_arn" {
@@ -27,81 +24,74 @@ output "role_arn" {
 }
 ```
 
-After `terraform apply`, copy the `role_arn` output and paste it into the
-OpsCurb dashboard to complete the connection.
+## Core plus shared optional add-ons
 
----
+```hcl
+module "opscurb" {
+  source  = "OpsCurb/opscurb/aws"
+  version = "~> 1.0"
 
-## Requirements
+  opscurb_aws_account_id = "593543056092"
+  external_id            = "ccg-core-12345678"
 
-| Name | Version |
-|------|---------|
-| terraform | >= 1.3 |
-| aws | >= 4.0 |
+  optional_role_mode     = "shared"
+  optional_capabilities  = ["deep_inspect", "logs_diagnostics", "s3_inventory"]
+  optional_external_id   = "ccg-optional-shared-12345678"
+}
+
+output "core_role_arn" {
+  value = module.opscurb.core_role_arn
+}
+
+output "optional_role_arns" {
+  value = module.opscurb.optional_role_arns
+}
+```
+
+## Core plus separate optional add-ons
+
+```hcl
+module "opscurb" {
+  source  = "OpsCurb/opscurb/aws"
+  version = "~> 1.0"
+
+  opscurb_aws_account_id = "593543056092"
+  external_id            = "ccg-core-12345678"
+
+  optional_role_mode    = "separate"
+  optional_capabilities = ["deep_inspect", "tag_inventory"]
+  optional_external_ids = {
+    deep_inspect = "ccg-deep-inspect-12345678"
+    tag_inventory = "ccg-tag-inventory-12345678"
+  }
+}
+```
 
 ## Inputs
 
-| Name | Description | Type | Default | Required |
-|------|-------------|------|---------|----------|
-| `opscurb_aws_account_id` | AWS Account ID of the OpsCurb application (shown in your dashboard) | `string` | — | yes |
-| `external_id` | External ID for confused-deputy protection (shown in your dashboard) | `string` | — | yes |
-| `role_name` | Name of the IAM role created in your account | `string` | `"OpsCurbRole"` | no |
-| `tags` | Additional tags to apply to all resources | `map(string)` | `{}` | no |
-| `enable_tag_write` | Grant OpsCurb permission to apply tags via the Bulk Apply feature | `bool` | `false` | no |
+| Name | Type | Default | Description |
+| --- | --- | --- | --- |
+| `opscurb_aws_account_id` | `string` | n/a | AWS account ID that OpsCurb uses to assume the roles. |
+| `external_id` | `string` | n/a | External ID for the core scan role. |
+| `role_name_prefix` | `string` | `"opscurb"` | Prefix used for generated IAM role names. |
+| `path` | `string` | `"/"` | IAM path for generated roles. |
+| `tags` | `map(string)` | `{}` | Tags applied to all generated roles. |
+| `optional_capabilities` | `set(string)` | `[]` | Optional capabilities to create add-on roles for. |
+| `optional_role_mode` | `string` | `"separate"` | Use `"shared"` for one merged optional role or `"separate"` for one role per add-on. |
+| `optional_external_id` | `string` | `null` | Shared optional-role external ID or fallback for separate roles. |
+| `optional_external_ids` | `map(string)` | `{}` | Per-capability external IDs for separate optional roles. |
+| `create_legacy_role` | `bool` | `false` | Create the legacy broad-access migration role. |
+| `legacy_external_id` | `string` | `null` | External ID for the legacy migration role. Falls back to `external_id`. |
 
 ## Outputs
 
 | Name | Description |
-|------|-------------|
-| `role_arn` | ARN of the IAM role — paste this into the OpsCurb dashboard |
-| `role_name` | Name of the IAM role |
-| `policy_arn` | ARN of the read-only policy attached to the role |
-
----
-
-## Permissions
-
-The module creates a single read-only policy covering:
-
-| Service | Actions |
-|---------|---------|
-| EC2 | Describe volumes, snapshots, instances, launch templates, flow logs, managed prefix lists, NAT gateways, VPC endpoints, etc. |
-| ELB | Describe load balancers, target groups, target health |
-| RDS | Describe DB instances and snapshots |
-| S3 | List buckets, read metadata (no object content access) |
-| CloudWatch / Logs | Get metrics, describe log groups, and run scoped Logs Insights queries for Lambda and NAT evidence |
-| ECR | Describe repositories and images |
-| Lambda | List and describe functions |
-| ECS | List clusters/services and read task definitions for Fargate waste detection |
-| IAM | List users, access keys, and roles to detect stale credentials |
-| Cost Explorer | Get cost, forecast, savings plans, and reservation data |
-| Resource Groups Tagging | Read-only tag scanning |
-
-**OpsCurb cannot read S3 object contents, write data, or delete anything.**
-
-Some of these read permissions exist to improve scan precision rather than widen access. For example, launch-template and Auto Scaling reads help OpsCurb avoid false positives on stale AMIs, `logs:StartQuery` / `logs:GetQueryResults` let OpsCurb inspect Lambda `REPORT` lines and existing VPC Flow Logs for higher-confidence waste findings, and ECS reads let OpsCurb size Fargate services from task definitions plus ECS service telemetry.
-
-### Optional: Tag Write
-
-Set `enable_tag_write = true` to allow OpsCurb's Tagging Compliance dashboard
-to bulk-apply tags on your behalf. This attaches a second policy with
-`tag:TagResources` and `tag:UntagResources`.
-
----
-
-## Security
-
-- **Confused-deputy protection**: the trust policy requires a unique `external_id`
-  that is generated per-account in your dashboard. This prevents any third party
-  from tricking OpsCurb into assuming your role even if they know your account ID.
-- **Least privilege**: all permissions are read-only. The only optional write
-  permission is tagging, and it is disabled by default.
-- **Versioned**: pin to a specific module version to avoid unexpected permission
-  changes during upgrades.
-
----
-
-## License
-
-Apache 2.0 — see [LICENSE](LICENSE).
-
+| --- | --- |
+| `role_arn` | Backward-compatible alias for the core scan role ARN. |
+| `core_role_arn` | ARN of the required core scan role. |
+| `core_role_name` | Name of the required core scan role. |
+| `connected_capabilities` | List of capabilities represented by the created roles. |
+| `shared_optional_role_arn` | ARN of the shared optional role when enabled. |
+| `optional_role_arns` | Capability-to-role ARN mapping for optional add-ons. |
+| `optional_external_ids` | Capability-to-external-ID mapping for optional add-ons. |
+| `legacy_role_arn` | ARN of the legacy migration role when enabled. |

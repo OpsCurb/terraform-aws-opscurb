@@ -1,50 +1,102 @@
 variable "opscurb_aws_account_id" {
-  description = "AWS Account ID of the OpsCurb application (the account that will assume this role). Copy this value from your OpsCurb dashboard."
+  description = "AWS account ID that OpsCurb uses to assume the customer-facing roles."
   type        = string
 
   validation {
-    condition     = can(regex("^[0-9]{12}$", var.opscurb_aws_account_id))
+    condition     = can(regex("^[0-9]{12}$", trimspace(var.opscurb_aws_account_id)))
     error_message = "opscurb_aws_account_id must be a 12-digit AWS account ID."
   }
 }
 
 variable "external_id" {
-  description = "External ID for the confused-deputy protection on the trust policy. Copy this value from your OpsCurb dashboard."
+  description = "External ID for the required core scan role."
   type        = string
-  sensitive   = true
 
   validation {
-    condition     = length(var.external_id) >= 8
-    error_message = "external_id must be at least 8 characters long."
+    condition     = length(trimspace(var.external_id)) > 0
+    error_message = "external_id must not be empty."
   }
 }
 
-variable "role_name" {
-  description = "Name of the IAM role created in your AWS account."
+variable "role_name_prefix" {
+  description = "Prefix used for generated IAM role names."
   type        = string
-  default     = "OpsCurbRole"
+  default     = "opscurb"
+}
+
+variable "path" {
+  description = "IAM path for created roles."
+  type        = string
+  default     = "/"
 }
 
 variable "tags" {
-  description = "Additional tags to apply to all resources created by this module."
+  description = "Tags applied to every created IAM role."
   type        = map(string)
   default     = {}
 }
 
-variable "enable_tag_write" {
-  description = <<-EOT
-    Opt-in: grant OpsCurb permission to apply tags on your behalf via the
-    Tagging Compliance dashboard's Bulk Apply feature.
+variable "optional_capabilities" {
+  description = "Optional add-on capabilities to create roles for."
+  type        = set(string)
+  default     = []
 
-    When true, an additional IAM policy is attached to the role that allows
-    tag:TagResources and tag:UntagResources across all resources.
-    The base read-only policy always includes tag:GetResources (required
-    for the compliance scanner).
+  validation {
+    condition = alltrue([
+      for capability in var.optional_capabilities :
+      contains([
+        "deep_inspect",
+        "logs_diagnostics",
+        "s3_inventory",
+        "iam_inventory",
+        "tag_inventory",
+      ], capability)
+    ])
+    error_message = "optional_capabilities may only include deep_inspect, logs_diagnostics, s3_inventory, iam_inventory, or tag_inventory."
+  }
+}
 
-    Set to true only after reviewing the Tagging Compliance feature and
-    confirming you want OpsCurb to write tags to your resources.
-  EOT
+variable "optional_role_mode" {
+  description = "Whether optional capabilities use one shared role or separate roles."
+  type        = string
+  default     = "separate"
+
+  validation {
+    condition     = contains(["shared", "separate"], var.optional_role_mode)
+    error_message = "optional_role_mode must be either shared or separate."
+  }
+}
+
+variable "optional_external_id" {
+  description = "External ID for the shared optional role, or a fallback when separate optional roles do not have explicit IDs."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "optional_external_ids" {
+  description = "Per-capability external IDs for separate optional roles."
+  type        = map(string)
+  default     = {}
+
+  validation {
+    condition = alltrue([
+      for external_id in values(var.optional_external_ids) :
+      length(trimspace(external_id)) > 0
+    ])
+    error_message = "optional_external_ids values must not be empty or whitespace-only."
+  }
+}
+
+variable "create_legacy_role" {
+  description = "Whether to create the legacy broad-access migration role."
   type        = bool
   default     = false
 }
 
+variable "legacy_external_id" {
+  description = "External ID for the optional legacy broad-access migration role. Falls back to external_id when omitted."
+  type        = string
+  default     = null
+  nullable    = true
+}
